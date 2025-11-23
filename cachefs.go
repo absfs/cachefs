@@ -3,6 +3,7 @@ package cachefs
 import (
 	"fmt"
 	"io/fs"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -26,25 +27,27 @@ type CacheFS struct {
 	metadataMaxEntries  uint64
 
 	// Cache state
-	entries   map[string]*cacheEntry
-	lruHead   *cacheEntry // most recently used
-	lruTail   *cacheEntry // least recently used
-	stats     Stats
+	entries          map[string]*cacheEntry
+	lruHead          *cacheEntry // most recently used
+	lruTail          *cacheEntry // least recently used
+	metadataEntries  map[string]*metadataEntry
+	stats            Stats
 }
 
 // New creates a new CacheFS with the given backing filesystem and options
 func New(backing absfs.FileSystem, opts ...Option) *CacheFS {
 	c := &CacheFS{
-		backing:        backing,
-		writeMode:      WriteModeWriteThrough,
-		evictionPolicy: EvictionLRU,
-		maxBytes:       100 * 1024 * 1024, // 100 MB default
-		maxEntries:     0,                  // unlimited by default
-		ttl:            0,                  // no TTL by default
-		flushInterval:  30 * time.Second,
-		flushOnClose:   true,
-		metadataCache:  false,
-		entries:        make(map[string]*cacheEntry),
+		backing:         backing,
+		writeMode:       WriteModeWriteThrough,
+		evictionPolicy:  EvictionLRU,
+		maxBytes:        100 * 1024 * 1024, // 100 MB default
+		maxEntries:      0,                  // unlimited by default
+		ttl:             0,                  // no TTL by default
+		flushInterval:   30 * time.Second,
+		flushOnClose:    true,
+		metadataCache:   false,
+		entries:         make(map[string]*cacheEntry),
+		metadataEntries: make(map[string]*metadataEntry),
 	}
 
 	for _, opt := range opts {
@@ -97,9 +100,87 @@ func (c *CacheFS) Remove(name string) error {
 
 // Stat returns file information
 func (c *CacheFS) Stat(name string) (fs.FileInfo, error) {
-	// For now, delegate to backing filesystem
-	// Metadata caching will be added in Phase 2
-	return c.backing.Stat(name)
+	// If metadata caching is disabled, just delegate
+	if !c.metadataCache {
+		return c.backing.Stat(name)
+	}
+
+	c.mu.RLock()
+	entry, cached := c.metadataEntries[name]
+	c.mu.RUnlock()
+
+	if cached {
+		// Check if expired
+		if c.ttl > 0 && !entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt) {
+			// Expired, remove and fetch fresh
+			c.mu.Lock()
+			delete(c.metadataEntries, name)
+			c.mu.Unlock()
+		} else {
+			// Cache hit
+			c.mu.Lock()
+			entry.lastAccess = time.Now()
+			entry.accessCount++
+			c.mu.Unlock()
+			return entry.info, nil
+		}
+	}
+
+	// Cache miss or expired - fetch from backing store
+	info, err := c.backing.Stat(name)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add to metadata cache
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+	newEntry := &metadataEntry{
+		path:        name,
+		info:        info,
+		lastAccess:  now,
+		accessCount: 1,
+		createdAt:   now,
+	}
+
+	if c.ttl > 0 {
+		newEntry.expiresAt = now.Add(c.ttl)
+	}
+
+	c.metadataEntries[name] = newEntry
+
+	// Evict old metadata if needed
+	if c.metadataMaxEntries > 0 && uint64(len(c.metadataEntries)) > c.metadataMaxEntries {
+		c.evictMetadata()
+	}
+
+	return info, nil
+}
+
+// evictMetadata removes the least recently used metadata entry
+func (c *CacheFS) evictMetadata() {
+	if len(c.metadataEntries) == 0 {
+		return
+	}
+
+	// Find least recently accessed entry
+	var oldestEntry *metadataEntry
+	var oldestPath string
+	var oldestAccess time.Time
+
+	for path, entry := range c.metadataEntries {
+		if oldestEntry == nil || entry.lastAccess.Before(oldestAccess) {
+			oldestAccess = entry.lastAccess
+			oldestEntry = entry
+			oldestPath = path
+		}
+	}
+
+	if oldestPath != "" {
+		delete(c.metadataEntries, oldestPath)
+	}
 }
 
 // Rename renames a file or directory
@@ -205,6 +286,78 @@ func (c *CacheFS) Invalidate(path string) {
 	if entry, ok := c.entries[path]; ok {
 		c.removeEntry(entry)
 	}
+
+	// Also invalidate metadata cache
+	delete(c.metadataEntries, path)
+}
+
+// InvalidatePrefix invalidates all cache entries with the given path prefix
+func (c *CacheFS) InvalidatePrefix(prefix string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Collect entries to remove
+	toRemove := make([]*cacheEntry, 0)
+	for path, entry := range c.entries {
+		if len(path) >= len(prefix) && path[:len(prefix)] == prefix {
+			toRemove = append(toRemove, entry)
+		}
+	}
+
+	// Remove data cache entries
+	for _, entry := range toRemove {
+		c.removeEntry(entry)
+	}
+
+	// Remove metadata cache entries
+	metaToRemove := make([]string, 0)
+	for path := range c.metadataEntries {
+		if len(path) >= len(prefix) && path[:len(prefix)] == prefix {
+			metaToRemove = append(metaToRemove, path)
+		}
+	}
+
+	for _, path := range metaToRemove {
+		delete(c.metadataEntries, path)
+	}
+}
+
+// InvalidatePattern invalidates cache entries matching a glob pattern
+func (c *CacheFS) InvalidatePattern(pattern string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Collect entries to remove
+	toRemove := make([]*cacheEntry, 0)
+	for path, entry := range c.entries {
+		matched, err := filepath.Match(pattern, path)
+		if err != nil {
+			return fmt.Errorf("invalid pattern: %w", err)
+		}
+		if matched {
+			toRemove = append(toRemove, entry)
+		}
+	}
+
+	// Remove data cache entries
+	for _, entry := range toRemove {
+		c.removeEntry(entry)
+	}
+
+	// Remove metadata cache entries
+	metaToRemove := make([]string, 0)
+	for path := range c.metadataEntries {
+		matched, _ := filepath.Match(pattern, path)
+		if matched {
+			metaToRemove = append(metaToRemove, path)
+		}
+	}
+
+	for _, path := range metaToRemove {
+		delete(c.metadataEntries, path)
+	}
+
+	return nil
 }
 
 // Clear removes all entries from the cache
@@ -215,6 +368,9 @@ func (c *CacheFS) Clear() {
 	for _, entry := range c.entries {
 		c.removeEntry(entry)
 	}
+
+	// Clear metadata cache as well
+	c.metadataEntries = make(map[string]*metadataEntry)
 }
 
 // Flush flushes all dirty entries to the backing store (write-back mode)
@@ -344,10 +500,164 @@ func (c *CacheFS) shouldEvict() bool {
 
 // evictIfNeeded evicts entries if cache limits are exceeded
 func (c *CacheFS) evictIfNeeded() error {
+	// First, try to evict expired entries
+	if c.ttl > 0 {
+		c.evictExpired()
+	}
+
+	// If still need to evict, use the configured policy
 	for c.shouldEvict() {
-		if err := c.evictLRU(); err != nil {
+		var err error
+		switch c.evictionPolicy {
+		case EvictionLRU:
+			err = c.evictLRU()
+		case EvictionLFU:
+			err = c.evictLFU()
+		case EvictionTTL:
+			err = c.evictOldest()
+		case EvictionHybrid:
+			err = c.evictHybrid()
+		default:
+			err = c.evictLRU()
+		}
+		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// evictLFU evicts the least frequently used entry
+func (c *CacheFS) evictLFU() error {
+	if len(c.entries) == 0 {
+		return fmt.Errorf("cache is empty, cannot evict")
+	}
+
+	// Find entry with lowest access count
+	var lfuEntry *cacheEntry
+	minAccessCount := uint64(^uint64(0)) // max uint64
+
+	for _, entry := range c.entries {
+		if entry.accessCount < minAccessCount {
+			minAccessCount = entry.accessCount
+			lfuEntry = entry
+		}
+	}
+
+	if lfuEntry == nil {
+		return fmt.Errorf("no entry found to evict")
+	}
+
+	// If entry is dirty in write-back mode, flush it first
+	if lfuEntry.dirty {
+		if err := c.flushEntry(lfuEntry); err != nil {
+			return fmt.Errorf("failed to flush dirty entry during eviction: %w", err)
+		}
+	}
+
+	c.removeEntry(lfuEntry)
+	c.stats.recordEviction()
+
+	return nil
+}
+
+// evictOldest evicts the oldest entry (based on creation time)
+func (c *CacheFS) evictOldest() error {
+	if len(c.entries) == 0 {
+		return fmt.Errorf("cache is empty, cannot evict")
+	}
+
+	// Find oldest entry
+	var oldestEntry *cacheEntry
+	var oldestTime time.Time
+
+	for _, entry := range c.entries {
+		if oldestEntry == nil || entry.createdAt.Before(oldestTime) {
+			oldestTime = entry.createdAt
+			oldestEntry = entry
+		}
+	}
+
+	if oldestEntry == nil {
+		return fmt.Errorf("no entry found to evict")
+	}
+
+	// If entry is dirty in write-back mode, flush it first
+	if oldestEntry.dirty {
+		if err := c.flushEntry(oldestEntry); err != nil {
+			return fmt.Errorf("failed to flush dirty entry during eviction: %w", err)
+		}
+	}
+
+	c.removeEntry(oldestEntry)
+	c.stats.recordEviction()
+
+	return nil
+}
+
+// evictHybrid evicts using a hybrid strategy (LRU with access count tie-breaker)
+func (c *CacheFS) evictHybrid() error {
+	if c.lruTail == nil {
+		return fmt.Errorf("cache is empty, cannot evict")
+	}
+
+	// Start with LRU tail (least recently used)
+	candidate := c.lruTail
+
+	// If there are multiple entries with low access counts, prefer those
+	// Walk backwards from tail to find entries with low access counts
+	lowAccessThreshold := uint64(2) // Consider entries accessed <= 2 times
+	current := c.lruTail
+
+	for current != nil {
+		if current.accessCount <= lowAccessThreshold {
+			candidate = current
+			break
+		}
+		current = current.prev
+		// Only check a few entries to avoid full scan
+		if current != nil && current.prev == nil {
+			break
+		}
+	}
+
+	// If entry is dirty in write-back mode, flush it first
+	if candidate.dirty {
+		if err := c.flushEntry(candidate); err != nil {
+			return fmt.Errorf("failed to flush dirty entry during eviction: %w", err)
+		}
+	}
+
+	c.removeEntry(candidate)
+	c.stats.recordEviction()
+
+	return nil
+}
+
+// evictExpired removes all expired entries based on TTL
+func (c *CacheFS) evictExpired() {
+	if c.ttl == 0 {
+		return
+	}
+
+	now := time.Now()
+	toRemove := make([]*cacheEntry, 0)
+
+	for _, entry := range c.entries {
+		if !entry.expiresAt.IsZero() && now.After(entry.expiresAt) {
+			toRemove = append(toRemove, entry)
+		}
+	}
+
+	for _, entry := range toRemove {
+		c.removeEntry(entry)
+		c.stats.recordEviction()
+	}
+}
+
+// CleanExpired removes expired entries (can be called manually or periodically)
+func (c *CacheFS) CleanExpired() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.evictExpired()
 }

@@ -1,6 +1,7 @@
 package cachefs
 
 import (
+	"io/fs"
 	"sync"
 	"time"
 )
@@ -50,6 +51,16 @@ type cacheEntry struct {
 	// TTL fields
 	createdAt time.Time
 	expiresAt time.Time
+}
+
+// metadataEntry represents cached file metadata
+type metadataEntry struct {
+	path        string
+	info        fs.FileInfo
+	lastAccess  time.Time
+	accessCount uint64
+	createdAt   time.Time
+	expiresAt   time.Time
 }
 
 // Stats represents cache statistics
