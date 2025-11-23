@@ -249,7 +249,8 @@ func (c *CacheFS) MkdirAll(name string, perm fs.FileMode) error {
 
 // RemoveAll removes a path and all children
 func (c *CacheFS) RemoveAll(path string) error {
-	// TODO: invalidate all entries under this path
+	// Invalidate the path and all entries under it
+	c.InvalidatePrefix(path)
 	return c.backing.RemoveAll(path)
 }
 
