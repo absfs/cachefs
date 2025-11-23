@@ -1,0 +1,42 @@
+goos: linux
+goarch: amd64
+pkg: github.com/absfs/cachefs
+cpu: Intel(R) Xeon(R) CPU @ 2.60GHz
+BenchmarkCacheFS_ReadHit-16                      	 1974595	       292.3 ns/op	     200 B/op	       4 allocs/op
+BenchmarkCacheFS_ReadMiss-16                     	  570385	       919.8 ns/op	     904 B/op	       7 allocs/op
+BenchmarkCacheFS_WriteThrough-16                 	 4031445	       147.2 ns/op	     128 B/op	       2 allocs/op
+BenchmarkCacheFS_WriteBack-16                    	   19676	     75891 ns/op	  200876 B/op	       4 allocs/op
+BenchmarkCacheFS_LRU_Eviction-16                 	  691929	       863.9 ns/op	     682 B/op	       6 allocs/op
+BenchmarkCacheFS_Sequential_Reads-16             	  719108	       950.3 ns/op	    1200 B/op	       4 allocs/op
+BenchmarkCacheFS_Random_Access-16                	 1534981	       385.1 ns/op	     216 B/op	       5 allocs/op
+BenchmarkCacheFS_Stats_Tracking-16               	 1599366	       377.3 ns/op	     192 B/op	       4 allocs/op
+BenchmarkCacheFS_Invalidate-16                   	 1538127	       380.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCacheFS_Clear-16                        	  247561	      2129 ns/op	      48 B/op	       1 allocs/op
+BenchmarkCacheFS_LFU_Eviction-16                 	  644802	       932.3 ns/op	     682 B/op	       6 allocs/op
+BenchmarkCacheFS_TTL_Eviction-16                 	  345860	      1699 ns/op	     992 B/op	       7 allocs/op
+BenchmarkCacheFS_Hybrid_Eviction-16              	  748788	       880.7 ns/op	     682 B/op	       6 allocs/op
+BenchmarkCacheFS_MetadataCache_Hit-16            	31277868	        19.58 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCacheFS_InvalidatePrefix-16             	  158646	      3467 ns/op	     248 B/op	       5 allocs/op
+BenchmarkCacheFS_InvalidatePattern-16            	   98714	      5302 ns/op	     248 B/op	       5 allocs/op
+BenchmarkCacheFS_CleanExpired-16                 	 6727736	        88.84 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCacheFS_TTL_With_Expiration-16          	    5049	    117953 ns/op	     206 B/op	       4 allocs/op
+BenchmarkCacheFS_MetadataCache_Miss-16           	14978454	        40.48 ns/op	      16 B/op	       1 allocs/op
+BenchmarkCacheFS_EvictionPolicy_Comparison/LRU-16         	  786147	       796.5 ns/op	     682 B/op	       6 allocs/op
+BenchmarkCacheFS_EvictionPolicy_Comparison/LFU-16         	  641842	       935.6 ns/op	     685 B/op	       6 allocs/op
+BenchmarkCacheFS_EvictionPolicy_Comparison/TTL-16         	  385444	      1355 ns/op	     992 B/op	       7 allocs/op
+BenchmarkCacheFS_EvictionPolicy_Comparison/Hybrid-16      	  667028	       823.6 ns/op	     682 B/op	       6 allocs/op
+BenchmarkWriteBack_SingleFile-16                          	   12668	     55167 ns/op	  162446 B/op	       4 allocs/op
+BenchmarkWriteBack_MultipleFiles-16                       	  200060	     29996 ns/op	   93782 B/op	       5 allocs/op
+BenchmarkWriteBack_Flush-16                               	 3745215	       151.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkWriteBack_FlushOnClose-16                        	   16452	     49678 ns/op	  160345 B/op	       4 allocs/op
+BenchmarkWriteBack_LargeWrites-16                         	     100	  40063804 ns/op	58542592 B/op	       4 allocs/op
+BenchmarkWriteMode_Comparison/WriteThrough-16             	 2653501	       215.4 ns/op	     128 B/op	       2 allocs/op
+BenchmarkWriteMode_Comparison/WriteBack-16                	   19256	     56047 ns/op	  244909 B/op	       4 allocs/op
+BenchmarkWriteMode_Comparison/WriteAround-16              	 2843553	       190.9 ns/op	     128 B/op	       2 allocs/op
+BenchmarkWriteBack_DirtyEviction-16                       	   79770	     27282 ns/op	   92171 B/op	       7 allocs/op
+BenchmarkWriteBack_ConcurrentWrites-16                    	  112155	     41396 ns/op	  101695 B/op	       4 allocs/op
+BenchmarkWriteBack_BackgroundFlush-16                     	   14834	     54538 ns/op	  159806 B/op	       4 allocs/op
+BenchmarkWriteBack_AccumulatedWrites-16                   	   10000	    290202 ns/op	  805114 B/op	       4 allocs/op
+BenchmarkWriteBack_ReadAfterWrite-16                      	   13948	     54374 ns/op	  150706 B/op	       8 allocs/op
+PASS
+ok  	github.com/absfs/cachefs	209.617s
