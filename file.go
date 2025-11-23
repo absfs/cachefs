@@ -88,18 +88,17 @@ func (f *cachedFile) Read(p []byte) (n int, err error) {
 		return 0, err
 	}
 
-	// Create cache entry
+	// Create cache entry from pool
 	now := time.Now()
-	newEntry := &cacheEntry{
-		path:        f.path,
-		data:        data,
-		modTime:     now,
-		size:        int64(len(data)),
-		dirty:       false,
-		lastAccess:  now,
-		accessCount: 1,
-		createdAt:   now,
-	}
+	newEntry := getCacheEntry()
+	newEntry.path = f.path
+	newEntry.data = data
+	newEntry.modTime = now
+	newEntry.size = int64(len(data))
+	newEntry.dirty = false
+	newEntry.lastAccess = now
+	newEntry.accessCount = 1
+	newEntry.createdAt = now
 
 	if f.cfs.ttl > 0 {
 		newEntry.expiresAt = now.Add(f.cfs.ttl)
@@ -156,18 +155,17 @@ func (f *cachedFile) Write(p []byte) (n int, err error) {
 
 		entry, ok := f.cfs.entries[f.path]
 		if !ok {
-			// Create new cache entry
+			// Create new cache entry from pool
 			now := time.Now()
-			entry = &cacheEntry{
-				path:        f.path,
-				data:        make([]byte, 0),
-				modTime:     now,
-				size:        0,
-				dirty:       true,
-				lastAccess:  now,
-				accessCount: 1,
-				createdAt:   now,
-			}
+			entry = getCacheEntry()
+			entry.path = f.path
+			entry.data = make([]byte, 0)
+			entry.modTime = now
+			entry.size = 0
+			entry.dirty = true
+			entry.lastAccess = now
+			entry.accessCount = 1
+			entry.createdAt = now
 
 			if f.cfs.ttl > 0 {
 				entry.expiresAt = now.Add(f.cfs.ttl)

@@ -126,6 +126,7 @@ func (c *CacheFS) Stat(name string) (fs.FileInfo, error) {
 			// Expired, remove and fetch fresh
 			c.mu.Lock()
 			delete(c.metadataEntries, name)
+			putMetadataEntry(entry)
 			c.mu.Unlock()
 		} else {
 			// Cache hit
@@ -148,13 +149,12 @@ func (c *CacheFS) Stat(name string) (fs.FileInfo, error) {
 	defer c.mu.Unlock()
 
 	now := time.Now()
-	newEntry := &metadataEntry{
-		path:        name,
-		info:        info,
-		lastAccess:  now,
-		accessCount: 1,
-		createdAt:   now,
-	}
+	newEntry := getMetadataEntry()
+	newEntry.path = name
+	newEntry.info = info
+	newEntry.lastAccess = now
+	newEntry.accessCount = 1
+	newEntry.createdAt = now
 
 	if c.ttl > 0 {
 		newEntry.expiresAt = now.Add(c.ttl)
@@ -191,6 +191,7 @@ func (c *CacheFS) evictMetadata() {
 
 	if oldestPath != "" {
 		delete(c.metadataEntries, oldestPath)
+		putMetadataEntry(oldestEntry)
 	}
 }
 
@@ -300,7 +301,10 @@ func (c *CacheFS) Invalidate(path string) {
 	}
 
 	// Also invalidate metadata cache
-	delete(c.metadataEntries, path)
+	if metaEntry, ok := c.metadataEntries[path]; ok {
+		delete(c.metadataEntries, path)
+		putMetadataEntry(metaEntry)
+	}
 }
 
 // InvalidatePrefix invalidates all cache entries with the given path prefix
@@ -322,15 +326,18 @@ func (c *CacheFS) InvalidatePrefix(prefix string) {
 	}
 
 	// Remove metadata cache entries
-	metaToRemove := make([]string, 0)
-	for path := range c.metadataEntries {
+	metaToRemove := make([]*metadataEntry, 0)
+	metaPaths := make([]string, 0)
+	for path, entry := range c.metadataEntries {
 		if len(path) >= len(prefix) && path[:len(prefix)] == prefix {
-			metaToRemove = append(metaToRemove, path)
+			metaToRemove = append(metaToRemove, entry)
+			metaPaths = append(metaPaths, path)
 		}
 	}
 
-	for _, path := range metaToRemove {
+	for i, path := range metaPaths {
 		delete(c.metadataEntries, path)
+		putMetadataEntry(metaToRemove[i])
 	}
 }
 
@@ -357,16 +364,19 @@ func (c *CacheFS) InvalidatePattern(pattern string) error {
 	}
 
 	// Remove metadata cache entries
-	metaToRemove := make([]string, 0)
-	for path := range c.metadataEntries {
+	metaToRemove := make([]*metadataEntry, 0)
+	metaPaths := make([]string, 0)
+	for path, entry := range c.metadataEntries {
 		matched, _ := filepath.Match(pattern, path)
 		if matched {
-			metaToRemove = append(metaToRemove, path)
+			metaToRemove = append(metaToRemove, entry)
+			metaPaths = append(metaPaths, path)
 		}
 	}
 
-	for _, path := range metaToRemove {
+	for i, path := range metaPaths {
 		delete(c.metadataEntries, path)
+		putMetadataEntry(metaToRemove[i])
 	}
 
 	return nil
@@ -381,7 +391,10 @@ func (c *CacheFS) Clear() {
 		c.removeEntry(entry)
 	}
 
-	// Clear metadata cache as well
+	// Clear metadata cache as well and return entries to pool
+	for _, entry := range c.metadataEntries {
+		putMetadataEntry(entry)
+	}
 	c.metadataEntries = make(map[string]*metadataEntry)
 }
 
@@ -412,6 +425,9 @@ func (c *CacheFS) removeEntry(entry *cacheEntry) {
 	// Update statistics
 	c.stats.removeBytes(uint64(len(entry.data)))
 	c.stats.decEntries()
+
+	// Return entry to pool
+	putCacheEntry(entry)
 }
 
 // removeLRU removes an entry from the LRU linked list
