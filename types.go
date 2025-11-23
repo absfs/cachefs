@@ -3,6 +3,7 @@ package cachefs
 import (
 	"io/fs"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -119,110 +120,103 @@ type metadataEntry struct {
 	expiresAt   time.Time
 }
 
-// Stats represents cache statistics
+// Stats represents cache statistics using lock-free atomic operations
 type Stats struct {
-	mu sync.RWMutex
+	hits      atomicUint64
+	misses    atomicUint64
+	evictions atomicUint64
+	bytesUsed atomicUint64
+	entries   atomicUint64
+}
 
-	hits      uint64
-	misses    uint64
-	evictions uint64
-	bytesUsed uint64
-	entries   uint64
+// atomicUint64 wraps sync/atomic operations for uint64
+type atomicUint64 struct {
+	value uint64
+}
+
+func (a *atomicUint64) Load() uint64 {
+	return atomic.LoadUint64(&a.value)
+}
+
+func (a *atomicUint64) Store(val uint64) {
+	atomic.StoreUint64(&a.value, val)
+}
+
+func (a *atomicUint64) Add(delta uint64) uint64 {
+	return atomic.AddUint64(&a.value, delta)
+}
+
+func (a *atomicUint64) Sub(delta uint64) uint64 {
+	// Subtraction is done by adding the two's complement
+	return atomic.AddUint64(&a.value, ^uint64(delta-1))
 }
 
 // HitRate returns the cache hit rate as a value between 0 and 1
 func (s *Stats) HitRate() float64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	total := s.hits + s.misses
+	hits := s.hits.Load()
+	misses := s.misses.Load()
+	total := hits + misses
 	if total == 0 {
 		return 0.0
 	}
-	return float64(s.hits) / float64(total)
+	return float64(hits) / float64(total)
 }
 
 // Hits returns the number of cache hits
 func (s *Stats) Hits() uint64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.hits
+	return s.hits.Load()
 }
 
 // Misses returns the number of cache misses
 func (s *Stats) Misses() uint64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.misses
+	return s.misses.Load()
 }
 
 // Evictions returns the number of evicted entries
 func (s *Stats) Evictions() uint64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.evictions
+	return s.evictions.Load()
 }
 
 // BytesUsed returns the total bytes used by cache
 func (s *Stats) BytesUsed() uint64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.bytesUsed
+	return s.bytesUsed.Load()
 }
 
 // Entries returns the number of cached entries
 func (s *Stats) Entries() uint64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.entries
+	return s.entries.Load()
 }
 
 func (s *Stats) recordHit() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.hits++
+	s.hits.Add(1)
 }
 
 func (s *Stats) recordMiss() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.misses++
+	s.misses.Add(1)
 }
 
 func (s *Stats) recordEviction() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.evictions++
+	s.evictions.Add(1)
 }
 
 func (s *Stats) addBytes(n uint64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.bytesUsed += n
+	s.bytesUsed.Add(n)
 }
 
 func (s *Stats) removeBytes(n uint64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.bytesUsed -= n
+	s.bytesUsed.Sub(n)
 }
 
 func (s *Stats) incEntries() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.entries++
+	s.entries.Add(1)
 }
 
 func (s *Stats) decEntries() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.entries--
+	s.entries.Sub(1)
 }
 
 func (s *Stats) reset() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.hits = 0
-	s.misses = 0
-	s.evictions = 0
+	s.hits.Store(0)
+	s.misses.Store(0)
+	s.evictions.Store(0)
 }
