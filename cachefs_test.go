@@ -12,8 +12,9 @@ import (
 
 // mockFS is a simple in-memory filesystem for testing
 type mockFS struct {
-	files map[string][]byte
-	cwd   string
+	files    map[string][]byte
+	cwd      string
+	globFunc func(pattern string) ([]string, error)
 }
 
 func newMockFS() *mockFS {
@@ -111,6 +112,22 @@ func (m *mockFS) Truncate(name string, size int64) error {
 		}
 	}
 	return nil
+}
+
+func (m *mockFS) Glob(pattern string) ([]string, error) {
+	// Use custom glob function if provided
+	if m.globFunc != nil {
+		return m.globFunc(pattern)
+	}
+
+	// Simple glob implementation for testing
+	var matches []string
+	for path := range m.files {
+		// For now, just return all files
+		// Real implementation would match the pattern
+		matches = append(matches, path)
+	}
+	return matches, nil
 }
 
 type mockFile struct {
