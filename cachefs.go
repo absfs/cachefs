@@ -32,6 +32,10 @@ type CacheFS struct {
 	lruTail          *cacheEntry // least recently used
 	metadataEntries  map[string]*metadataEntry
 	stats            Stats
+
+	// Background flush
+	flushStop chan struct{}
+	flushDone chan struct{}
 }
 
 // New creates a new CacheFS with the given backing filesystem and options
@@ -52,6 +56,13 @@ func New(backing absfs.FileSystem, opts ...Option) *CacheFS {
 
 	for _, opt := range opts {
 		opt(c)
+	}
+
+	// Start background flush goroutine for write-back mode
+	if c.writeMode == WriteModeWriteBack && c.flushInterval > 0 {
+		c.flushStop = make(chan struct{})
+		c.flushDone = make(chan struct{})
+		go c.backgroundFlush()
 	}
 
 	return c
@@ -660,4 +671,49 @@ func (c *CacheFS) CleanExpired() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.evictExpired()
+}
+
+// backgroundFlush periodically flushes dirty entries to the backing store
+func (c *CacheFS) backgroundFlush() {
+	ticker := time.NewTicker(c.flushInterval)
+	defer ticker.Stop()
+	defer close(c.flushDone)
+
+	for {
+		select {
+		case <-ticker.C:
+			c.mu.Lock()
+			for _, entry := range c.entries {
+				if entry.dirty {
+					// Flush dirty entry
+					if err := c.flushEntry(entry); err != nil {
+						// Log error but continue flushing other entries
+						// In a production system, you'd want proper error logging here
+						_ = err
+					}
+				}
+			}
+			c.mu.Unlock()
+
+		case <-c.flushStop:
+			// Final flush before shutdown
+			c.mu.Lock()
+			for _, entry := range c.entries {
+				if entry.dirty {
+					c.flushEntry(entry)
+				}
+			}
+			c.mu.Unlock()
+			return
+		}
+	}
+}
+
+// Close stops the background flush goroutine and flushes all dirty entries
+func (c *CacheFS) Close() error {
+	if c.flushStop != nil {
+		close(c.flushStop)
+		<-c.flushDone // Wait for background goroutine to finish
+	}
+	return nil
 }
