@@ -151,8 +151,48 @@ func (f *cachedFile) Write(p []byte) (n int, err error) {
 
 	case WriteModeWriteBack:
 		// Write to cache, mark as dirty
-		// TODO: Implement in Phase 3
-		return f.file.Write(p)
+		f.cfs.mu.Lock()
+		defer f.cfs.mu.Unlock()
+
+		entry, ok := f.cfs.entries[f.path]
+		if !ok {
+			// Create new cache entry
+			now := time.Now()
+			entry = &cacheEntry{
+				path:        f.path,
+				data:        make([]byte, 0),
+				modTime:     now,
+				size:        0,
+				dirty:       true,
+				lastAccess:  now,
+				accessCount: 1,
+				createdAt:   now,
+			}
+
+			if f.cfs.ttl > 0 {
+				entry.expiresAt = now.Add(f.cfs.ttl)
+			}
+
+			f.cfs.entries[f.path] = entry
+			f.cfs.moveToHead(entry)
+			f.cfs.stats.incEntries()
+		}
+
+		// Append data to cache entry
+		entry.data = append(entry.data, p...)
+		entry.size = int64(len(entry.data))
+		entry.modTime = time.Now()
+		entry.dirty = true
+
+		// Update stats
+		f.cfs.stats.addBytes(uint64(len(p)))
+
+		// Evict if needed
+		if err := f.cfs.evictIfNeeded(); err != nil {
+			return 0, err
+		}
+
+		return len(p), nil
 
 	case WriteModeWriteAround:
 		// Bypass cache, write directly to backing store
