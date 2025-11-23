@@ -6,6 +6,62 @@ import (
 	"time"
 )
 
+// Pools for reducing allocations and GC pressure
+var (
+	cacheEntryPool = sync.Pool{
+		New: func() interface{} {
+			return &cacheEntry{}
+		},
+	}
+
+	metadataEntryPool = sync.Pool{
+		New: func() interface{} {
+			return &metadataEntry{}
+		},
+	}
+)
+
+// getCacheEntry gets a cache entry from the pool
+func getCacheEntry() *cacheEntry {
+	return cacheEntryPool.Get().(*cacheEntry)
+}
+
+// putCacheEntry returns a cache entry to the pool after resetting it
+func putCacheEntry(e *cacheEntry) {
+	// Reset the entry to avoid keeping references
+	e.path = ""
+	e.data = nil
+	e.modTime = time.Time{}
+	e.size = 0
+	e.dirty = false
+	e.lastAccess = time.Time{}
+	e.prev = nil
+	e.next = nil
+	e.accessCount = 0
+	e.createdAt = time.Time{}
+	e.expiresAt = time.Time{}
+
+	cacheEntryPool.Put(e)
+}
+
+// getMetadataEntry gets a metadata entry from the pool
+func getMetadataEntry() *metadataEntry {
+	return metadataEntryPool.Get().(*metadataEntry)
+}
+
+// putMetadataEntry returns a metadata entry to the pool after resetting it
+func putMetadataEntry(e *metadataEntry) {
+	// Reset the entry to avoid keeping references
+	e.path = ""
+	e.info = nil
+	e.lastAccess = time.Time{}
+	e.accessCount = 0
+	e.createdAt = time.Time{}
+	e.expiresAt = time.Time{}
+
+	metadataEntryPool.Put(e)
+}
+
 // WriteMode defines the cache write behavior
 type WriteMode int
 
