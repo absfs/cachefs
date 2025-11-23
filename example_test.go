@@ -2,6 +2,7 @@ package cachefs_test
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -45,9 +46,20 @@ type simpleFile struct {
 	pos  int64
 }
 
-func (f *simpleFile) Name() string                                   { return f.name }
-func (f *simpleFile) Read(p []byte) (n int, err error)               { data := f.fs.files[f.name]; n = copy(p, data[f.pos:]); f.pos += int64(n); return }
-func (f *simpleFile) Write(p []byte) (n int, err error)              { f.fs.files[f.name] = append(f.fs.files[f.name], p...); return len(p), nil }
+func (f *simpleFile) Name() string { return f.name }
+func (f *simpleFile) Read(p []byte) (n int, err error) {
+	data := f.fs.files[f.name]
+	if f.pos >= int64(len(data)) {
+		return 0, io.EOF
+	}
+	n = copy(p, data[f.pos:])
+	f.pos += int64(n)
+	if f.pos >= int64(len(data)) && n < len(p) {
+		err = io.EOF
+	}
+	return
+}
+func (f *simpleFile) Write(p []byte) (n int, err error) { f.fs.files[f.name] = append(f.fs.files[f.name], p...); return len(p), nil }
 func (f *simpleFile) Close() error                                   { return nil }
 func (f *simpleFile) Sync() error                                    { return nil }
 func (f *simpleFile) Stat() (os.FileInfo, error)                     { return nil, nil }
