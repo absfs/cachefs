@@ -53,21 +53,30 @@ func (f *cachedFile) Read(p []byte) (n int, err error) {
 	f.cfs.mu.RUnlock()
 
 	if cached {
-		// Cache hit - read from cache
-		f.cfs.stats.recordHit()
+		// Check if entry is expired
+		if f.cfs.ttl > 0 && !entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt) {
+			// Entry expired - remove it and treat as cache miss
+			f.cfs.mu.Lock()
+			f.cfs.removeEntry(entry)
+			f.cfs.mu.Unlock()
+			cached = false
+		} else {
+			// Cache hit - read from cache
+			f.cfs.stats.recordHit()
 
-		// Update access time and move to head of LRU
-		f.cfs.mu.Lock()
-		entry.lastAccess = time.Now()
-		entry.accessCount++
-		f.cfs.moveToHead(entry)
-		f.cfs.mu.Unlock()
+			// Update access time and move to head of LRU
+			f.cfs.mu.Lock()
+			entry.lastAccess = time.Now()
+			entry.accessCount++
+			f.cfs.moveToHead(entry)
+			f.cfs.mu.Unlock()
 
-		// Read from cached data
-		if f.buffer == nil {
-			f.buffer = bytes.NewBuffer(entry.data)
+			// Read from cached data
+			if f.buffer == nil {
+				f.buffer = bytes.NewBuffer(entry.data)
+			}
+			return f.buffer.Read(p)
 		}
-		return f.buffer.Read(p)
 	}
 
 	// Cache miss - read from backing file
