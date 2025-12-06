@@ -32,3 +32,8 @@ Thumbs.db
 coverage.txt
 coverage.html
 profile.out
+
+# Claude AI assistant files
+.claude/
+CLAUDE.md
+.project_meta/
