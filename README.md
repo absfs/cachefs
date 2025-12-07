@@ -1,5 +1,10 @@
 # cachefs
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/absfs/cachefs.svg)](https://pkg.go.dev/github.com/absfs/cachefs)
+[![Go Report Card](https://goreportcard.com/badge/github.com/absfs/cachefs)](https://goreportcard.com/report/github.com/absfs/cachefs)
+[![CI](https://github.com/absfs/cachefs/actions/workflows/ci.yml/badge.svg)](https://github.com/absfs/cachefs/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A sophisticated caching filesystem implementation for the AbsFS ecosystem, providing enterprise-grade write-through, write-back, and write-around caching with advanced eviction policies.
 
 ## Overview
