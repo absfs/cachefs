@@ -3,7 +3,7 @@ package cachefs
 import (
 	"fmt"
 	"io/fs"
-	"path/filepath"
+	"path"
 	"sync"
 	"time"
 
@@ -16,22 +16,22 @@ type CacheFS struct {
 	mu      sync.RWMutex
 
 	// Configuration
-	writeMode           WriteMode
-	evictionPolicy      EvictionPolicy
-	maxBytes            uint64
-	maxEntries          uint64
-	ttl                 time.Duration
-	flushInterval       time.Duration
-	flushOnClose        bool
-	metadataCache       bool
-	metadataMaxEntries  uint64
+	writeMode          WriteMode
+	evictionPolicy     EvictionPolicy
+	maxBytes           uint64
+	maxEntries         uint64
+	ttl                time.Duration
+	flushInterval      time.Duration
+	flushOnClose       bool
+	metadataCache      bool
+	metadataMaxEntries uint64
 
 	// Cache state
-	entries          map[string]*cacheEntry
-	lruHead          *cacheEntry // most recently used
-	lruTail          *cacheEntry // least recently used
-	metadataEntries  map[string]*metadataEntry
-	stats            Stats
+	entries         map[string]*cacheEntry
+	lruHead         *cacheEntry // most recently used
+	lruTail         *cacheEntry // least recently used
+	metadataEntries map[string]*metadataEntry
+	stats           Stats
 
 	// Background flush
 	flushStop chan struct{}
@@ -45,8 +45,8 @@ func New(backing absfs.FileSystem, opts ...Option) *CacheFS {
 		writeMode:       WriteModeWriteThrough,
 		evictionPolicy:  EvictionLRU,
 		maxBytes:        100 * 1024 * 1024, // 100 MB default
-		maxEntries:      0,                  // unlimited by default
-		ttl:             0,                  // no TTL by default
+		maxEntries:      0,                 // unlimited by default
+		ttl:             0,                 // no TTL by default
 		flushInterval:   30 * time.Second,
 		flushOnClose:    true,
 		metadataCache:   false,
@@ -348,8 +348,8 @@ func (c *CacheFS) InvalidatePattern(pattern string) error {
 
 	// Collect entries to remove
 	toRemove := make([]*cacheEntry, 0)
-	for path, entry := range c.entries {
-		matched, err := filepath.Match(pattern, path)
+	for entryPath, entry := range c.entries {
+		matched, err := path.Match(pattern, entryPath)
 		if err != nil {
 			return fmt.Errorf("invalid pattern: %w", err)
 		}
@@ -366,11 +366,11 @@ func (c *CacheFS) InvalidatePattern(pattern string) error {
 	// Remove metadata cache entries
 	metaToRemove := make([]*metadataEntry, 0)
 	metaPaths := make([]string, 0)
-	for path, entry := range c.metadataEntries {
-		matched, _ := filepath.Match(pattern, path)
+	for entryPath, entry := range c.metadataEntries {
+		matched, _ := path.Match(pattern, entryPath)
 		if matched {
 			metaToRemove = append(metaToRemove, entry)
-			metaPaths = append(metaPaths, path)
+			metaPaths = append(metaPaths, entryPath)
 		}
 	}
 
