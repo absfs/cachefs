@@ -20,8 +20,8 @@ type DetailedStats struct {
 	HitRate float64 `json:"hit_rate"`
 
 	// Write-back specific
-	FlushCount  uint64 `json:"flush_count,omitempty"`
-	FlushErrors uint64 `json:"flush_errors,omitempty"`
+	FlushCount   uint64 `json:"flush_count,omitempty"`
+	FlushErrors  uint64 `json:"flush_errors,omitempty"`
 	DirtyEntries uint64 `json:"dirty_entries,omitempty"`
 
 	// Per-operation counters

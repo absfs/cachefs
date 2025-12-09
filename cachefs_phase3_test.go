@@ -52,7 +52,9 @@ func TestWriteBackMode(t *testing.T) {
 	}
 
 	// Data should NOT be in backing store yet
+	backing.mu.RLock()
 	backingData, ok := backing.files["/test.txt"]
+	backing.mu.RUnlock()
 	if ok && len(backingData) > 0 {
 		t.Error("data should not be in backing store yet (write-back mode)")
 	}
@@ -61,7 +63,9 @@ func TestWriteBackMode(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 
 	// Now data should be in backing store
+	backing.mu.RLock()
 	backingData = backing.files["/test.txt"]
+	backing.mu.RUnlock()
 	if !bytes.Equal(backingData, testData) {
 		t.Errorf("backing store data = %q, want %q", backingData, testData)
 	}
@@ -93,7 +97,10 @@ func TestWriteBackManualFlush(t *testing.T) {
 	file.Close()
 
 	// Data should not be in backing store yet
-	if len(backing.files["/test.txt"]) > 0 {
+	backing.mu.RLock()
+	backingLen := len(backing.files["/test.txt"])
+	backing.mu.RUnlock()
+	if backingLen > 0 {
 		t.Error("data should not be in backing store yet")
 	}
 
@@ -104,7 +111,9 @@ func TestWriteBackManualFlush(t *testing.T) {
 	}
 
 	// Now data should be in backing store
+	backing.mu.RLock()
 	backingData := backing.files["/test.txt"]
+	backing.mu.RUnlock()
 	if !bytes.Equal(backingData, testData) {
 		t.Errorf("backing store data = %q, want %q", backingData, testData)
 	}
@@ -115,7 +124,7 @@ func TestWriteBackClose(t *testing.T) {
 	cache := New(backing,
 		WithWriteMode(WriteModeWriteBack),
 		WithFlushInterval(10*time.Second), // Long interval
-		WithFlushOnClose(false), // Don't flush on file close, only on cache close
+		WithFlushOnClose(false),           // Don't flush on file close, only on cache close
 	)
 
 	testData := []byte("close test data")

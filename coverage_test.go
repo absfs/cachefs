@@ -1674,9 +1674,9 @@ func (m *threadSafeMockFS) Rename(oldname, newname string) error {
 	m.mu.Unlock()
 	return nil
 }
-func (m *threadSafeMockFS) Chmod(name string, mode os.FileMode) error              { return nil }
+func (m *threadSafeMockFS) Chmod(name string, mode os.FileMode) error                   { return nil }
 func (m *threadSafeMockFS) Chtimes(name string, atime time.Time, mtime time.Time) error { return nil }
-func (m *threadSafeMockFS) Chown(name string, uid, gid int) error                  { return nil }
+func (m *threadSafeMockFS) Chown(name string, uid, gid int) error                       { return nil }
 func (m *threadSafeMockFS) Truncate(name string, size int64) error {
 	m.mu.Lock()
 	if data, ok := m.files[name]; ok {
@@ -1762,11 +1762,11 @@ func (f *threadSafeMockFile) Seek(offset int64, whence int) (int64, error) {
 	}
 	return f.pos, nil
 }
-func (f *threadSafeMockFile) Close() error                                 { return nil }
-func (f *threadSafeMockFile) Sync() error                                  { return nil }
-func (f *threadSafeMockFile) Stat() (os.FileInfo, error)                   { return nil, nil }
-func (f *threadSafeMockFile) Readdir(n int) ([]os.FileInfo, error)         { return nil, nil }
-func (f *threadSafeMockFile) Readdirnames(n int) ([]string, error)         { return nil, nil }
+func (f *threadSafeMockFile) Close() error                         { return nil }
+func (f *threadSafeMockFile) Sync() error                          { return nil }
+func (f *threadSafeMockFile) Stat() (os.FileInfo, error)           { return nil, nil }
+func (f *threadSafeMockFile) Readdir(n int) ([]os.FileInfo, error) { return nil, nil }
+func (f *threadSafeMockFile) Readdirnames(n int) ([]string, error) { return nil, nil }
 func (f *threadSafeMockFile) ReadAt(b []byte, off int64) (n int, err error) {
 	f.fs.mu.RLock()
 	data, ok := f.fs.files[f.name]

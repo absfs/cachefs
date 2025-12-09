@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/absfs/cachefs"
 	"github.com/absfs/absfs"
+	"github.com/absfs/cachefs"
 )
 
 // Simple in-memory filesystem for examples
@@ -19,23 +19,29 @@ func newSimpleFS() *simpleFS {
 	return &simpleFS{files: make(map[string][]byte)}
 }
 
-func (s *simpleFS) Separator() uint8                                                { return '/' }
-func (s *simpleFS) ListSeparator() uint8                                            { return ':' }
-func (s *simpleFS) Chdir(dir string) error                                          { return nil }
-func (s *simpleFS) Getwd() (string, error)                                          { return "/", nil }
-func (s *simpleFS) TempDir() string                                                 { return "/tmp" }
-func (s *simpleFS) Open(name string) (absfs.File, error)                            { return s.OpenFile(name, os.O_RDONLY, 0) }
-func (s *simpleFS) Create(name string) (absfs.File, error)                          { return s.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666) }
-func (s *simpleFS) Mkdir(name string, perm os.FileMode) error                       { return nil }
-func (s *simpleFS) MkdirAll(name string, perm os.FileMode) error                    { return nil }
-func (s *simpleFS) Remove(name string) error                                        { delete(s.files, name); return nil }
-func (s *simpleFS) RemoveAll(path string) error                                     { delete(s.files, path); return nil }
-func (s *simpleFS) Stat(name string) (os.FileInfo, error)                           { return nil, os.ErrNotExist }
-func (s *simpleFS) Rename(oldname, newname string) error                            { s.files[newname] = s.files[oldname]; delete(s.files, oldname); return nil }
-func (s *simpleFS) Chmod(name string, mode os.FileMode) error                       { return nil }
-func (s *simpleFS) Chtimes(name string, atime time.Time, mtime time.Time) error     { return nil }
-func (s *simpleFS) Chown(name string, uid, gid int) error                           { return nil }
-func (s *simpleFS) Truncate(name string, size int64) error                          { return nil }
+func (s *simpleFS) Separator() uint8                     { return '/' }
+func (s *simpleFS) ListSeparator() uint8                 { return ':' }
+func (s *simpleFS) Chdir(dir string) error               { return nil }
+func (s *simpleFS) Getwd() (string, error)               { return "/", nil }
+func (s *simpleFS) TempDir() string                      { return "/tmp" }
+func (s *simpleFS) Open(name string) (absfs.File, error) { return s.OpenFile(name, os.O_RDONLY, 0) }
+func (s *simpleFS) Create(name string) (absfs.File, error) {
+	return s.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+}
+func (s *simpleFS) Mkdir(name string, perm os.FileMode) error    { return nil }
+func (s *simpleFS) MkdirAll(name string, perm os.FileMode) error { return nil }
+func (s *simpleFS) Remove(name string) error                     { delete(s.files, name); return nil }
+func (s *simpleFS) RemoveAll(path string) error                  { delete(s.files, path); return nil }
+func (s *simpleFS) Stat(name string) (os.FileInfo, error)        { return nil, os.ErrNotExist }
+func (s *simpleFS) Rename(oldname, newname string) error {
+	s.files[newname] = s.files[oldname]
+	delete(s.files, oldname)
+	return nil
+}
+func (s *simpleFS) Chmod(name string, mode os.FileMode) error                   { return nil }
+func (s *simpleFS) Chtimes(name string, atime time.Time, mtime time.Time) error { return nil }
+func (s *simpleFS) Chown(name string, uid, gid int) error                       { return nil }
+func (s *simpleFS) Truncate(name string, size int64) error                      { return nil }
 func (s *simpleFS) OpenFile(name string, flag int, perm os.FileMode) (absfs.File, error) {
 	return &simpleFile{fs: s, name: name}, nil
 }
@@ -59,14 +65,20 @@ func (f *simpleFile) Read(p []byte) (n int, err error) {
 	}
 	return
 }
-func (f *simpleFile) Write(p []byte) (n int, err error) { f.fs.files[f.name] = append(f.fs.files[f.name], p...); return len(p), nil }
-func (f *simpleFile) Close() error                                   { return nil }
-func (f *simpleFile) Sync() error                                    { return nil }
-func (f *simpleFile) Stat() (os.FileInfo, error)                     { return nil, nil }
-func (f *simpleFile) Readdir(int) ([]os.FileInfo, error)             { return nil, nil }
-func (f *simpleFile) Readdirnames(int) ([]string, error)             { return nil, nil }
-func (f *simpleFile) Seek(offset int64, whence int) (int64, error)   { f.pos = offset; return f.pos, nil }
-func (f *simpleFile) ReadAt(b []byte, off int64) (n int, err error)  { data := f.fs.files[f.name]; return copy(b, data[off:]), nil }
+func (f *simpleFile) Write(p []byte) (n int, err error) {
+	f.fs.files[f.name] = append(f.fs.files[f.name], p...)
+	return len(p), nil
+}
+func (f *simpleFile) Close() error                                 { return nil }
+func (f *simpleFile) Sync() error                                  { return nil }
+func (f *simpleFile) Stat() (os.FileInfo, error)                   { return nil, nil }
+func (f *simpleFile) Readdir(int) ([]os.FileInfo, error)           { return nil, nil }
+func (f *simpleFile) Readdirnames(int) ([]string, error)           { return nil, nil }
+func (f *simpleFile) Seek(offset int64, whence int) (int64, error) { f.pos = offset; return f.pos, nil }
+func (f *simpleFile) ReadAt(b []byte, off int64) (n int, err error) {
+	data := f.fs.files[f.name]
+	return copy(b, data[off:]), nil
+}
 func (f *simpleFile) WriteAt(b []byte, off int64) (n int, err error) { return len(b), nil }
 func (f *simpleFile) Truncate(size int64) error                      { return nil }
 func (f *simpleFile) WriteString(s string) (n int, err error)        { return f.Write([]byte(s)) }

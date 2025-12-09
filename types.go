@@ -91,11 +91,11 @@ const (
 
 // cacheEntry represents a single cached item
 type cacheEntry struct {
-	path      string
-	data      []byte
-	modTime   time.Time
-	size      int64
-	dirty     bool // true if write-back mode and not yet flushed
+	path    string
+	data    []byte
+	modTime time.Time
+	size    int64
+	dirty   bool // true if write-back mode and not yet flushed
 
 	// LRU fields
 	lastAccess time.Time

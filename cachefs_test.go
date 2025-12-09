@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 // mockFS is a simple in-memory filesystem for testing
 type mockFS struct {
+	mu       sync.RWMutex
 	files    map[string][]byte
 	cwd      string
 	globFunc func(pattern string) ([]string, error)
@@ -72,12 +74,16 @@ func (m *mockFS) MkdirAll(name string, perm os.FileMode) error {
 }
 
 func (m *mockFS) Remove(name string) error {
+	m.mu.Lock()
 	delete(m.files, name)
+	m.mu.Unlock()
 	return nil
 }
 
 func (m *mockFS) RemoveAll(path string) error {
+	m.mu.Lock()
 	delete(m.files, path)
+	m.mu.Unlock()
 	return nil
 }
 
@@ -143,7 +149,9 @@ func (f *mockFile) Name() string {
 }
 
 func (f *mockFile) Read(p []byte) (n int, err error) {
+	f.fs.mu.RLock()
 	data, ok := f.fs.files[f.name]
+	f.fs.mu.RUnlock()
 	if !ok {
 		return 0, io.EOF
 	}
@@ -158,6 +166,9 @@ func (f *mockFile) Read(p []byte) (n int, err error) {
 }
 
 func (f *mockFile) Write(p []byte) (n int, err error) {
+	f.fs.mu.Lock()
+	defer f.fs.mu.Unlock()
+
 	data, ok := f.fs.files[f.name]
 	if !ok {
 		data = make([]byte, 0)
@@ -184,7 +195,9 @@ func (f *mockFile) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekCurrent:
 		f.pos += offset
 	case io.SeekEnd:
+		f.fs.mu.RLock()
 		data := f.fs.files[f.name]
+		f.fs.mu.RUnlock()
 		f.pos = int64(len(data)) + offset
 	}
 	return f.pos, nil
@@ -211,7 +224,9 @@ func (f *mockFile) Readdirnames(n int) ([]string, error) {
 }
 
 func (f *mockFile) ReadAt(b []byte, off int64) (n int, err error) {
+	f.fs.mu.RLock()
 	data, ok := f.fs.files[f.name]
+	f.fs.mu.RUnlock()
 	if !ok {
 		return 0, io.EOF
 	}
@@ -225,6 +240,9 @@ func (f *mockFile) ReadAt(b []byte, off int64) (n int, err error) {
 }
 
 func (f *mockFile) WriteAt(b []byte, off int64) (n int, err error) {
+	f.fs.mu.Lock()
+	defer f.fs.mu.Unlock()
+
 	data, ok := f.fs.files[f.name]
 	if !ok {
 		data = make([]byte, 0)
@@ -244,6 +262,9 @@ func (f *mockFile) WriteAt(b []byte, off int64) (n int, err error) {
 }
 
 func (f *mockFile) Truncate(size int64) error {
+	f.fs.mu.Lock()
+	defer f.fs.mu.Unlock()
+
 	data := f.fs.files[f.name]
 	if int64(len(data)) > size {
 		f.fs.files[f.name] = data[:size]
