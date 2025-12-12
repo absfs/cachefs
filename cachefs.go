@@ -2,6 +2,7 @@ package cachefs
 
 import (
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"sync"
@@ -66,11 +67,6 @@ func New(backing absfs.FileSystem, opts ...Option) *CacheFS {
 	}
 
 	return c
-}
-
-// Separator returns the path separator for the filesystem
-func (c *CacheFS) Separator() uint8 {
-	return c.backing.Separator()
 }
 
 // OpenFile opens a file with the specified flags and permissions
@@ -211,11 +207,6 @@ func (c *CacheFS) Rename(oldname, newname string) error {
 	}
 
 	return c.backing.Rename(oldname, newname)
-}
-
-// ListSeparator returns the list separator for the filesystem
-func (c *CacheFS) ListSeparator() uint8 {
-	return c.backing.ListSeparator()
 }
 
 // Chdir changes the current working directory
@@ -733,4 +724,284 @@ func (c *CacheFS) Close() error {
 		<-c.flushDone // Wait for background goroutine to finish
 	}
 	return nil
+}
+
+// ReadDir reads the named directory and returns a list of directory entries
+func (c *CacheFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	// Check if backing filesystem implements ReadDir
+	type readDirer interface {
+		ReadDir(name string) ([]fs.DirEntry, error)
+	}
+
+	if rd, ok := c.backing.(readDirer); ok {
+		// Delegate to backing filesystem's ReadDir if available
+		return rd.ReadDir(name)
+	}
+
+	// Fall back to opening the directory and reading entries
+	f, err := c.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	// Check if file implements ReadDir
+	type fileDirReader interface {
+		ReadDir(n int) ([]fs.DirEntry, error)
+	}
+
+	if fdr, ok := f.(fileDirReader); ok {
+		return fdr.ReadDir(-1)
+	}
+
+	// Fall back to Readdir and convert FileInfo to DirEntry
+	fileInfos, err := f.Readdir(-1)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]fs.DirEntry, len(fileInfos))
+	for i, info := range fileInfos {
+		entries[i] = fs.FileInfoToDirEntry(info)
+	}
+	return entries, nil
+}
+
+// ReadFile reads the named file and returns its contents
+func (c *CacheFS) ReadFile(name string) ([]byte, error) {
+	// Check cache first if available
+	c.mu.RLock()
+	entry, cached := c.entries[name]
+	c.mu.RUnlock()
+
+	if cached {
+		// Check if entry is expired
+		if c.ttl > 0 && !entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt) {
+			// Entry expired - remove it
+			c.mu.Lock()
+			c.removeEntry(entry)
+			c.mu.Unlock()
+		} else {
+			// Cache hit - return cached data
+			c.stats.recordHit()
+			c.mu.Lock()
+			entry.lastAccess = time.Now()
+			entry.accessCount++
+			c.moveToHead(entry)
+			c.mu.Unlock()
+			return entry.data, nil
+		}
+	}
+
+	// Cache miss - check if backing filesystem implements ReadFile
+	type readFiler interface {
+		ReadFile(name string) ([]byte, error)
+	}
+
+	var data []byte
+	var err error
+
+	if rf, ok := c.backing.(readFiler); ok {
+		// Use backing filesystem's ReadFile
+		data, err = rf.ReadFile(name)
+	} else {
+		// Fall back to Open + Read
+		f, openErr := c.backing.OpenFile(name, absfs.O_RDONLY, 0)
+		if openErr != nil {
+			return nil, openErr
+		}
+		defer f.Close()
+
+		data, err = io.ReadAll(f)
+	}
+
+	if err != nil {
+		c.stats.recordMiss()
+		return nil, err
+	}
+
+	// Add to cache
+	c.stats.recordMiss()
+	now := time.Now()
+	newEntry := getCacheEntry()
+	newEntry.path = name
+	newEntry.data = data
+	newEntry.modTime = now
+	newEntry.size = int64(len(data))
+	newEntry.dirty = false
+	newEntry.lastAccess = now
+	newEntry.accessCount = 1
+	newEntry.createdAt = now
+
+	if c.ttl > 0 {
+		newEntry.expiresAt = now.Add(c.ttl)
+	}
+
+	c.mu.Lock()
+	c.entries[name] = newEntry
+	c.moveToHead(newEntry)
+	c.stats.addBytes(uint64(len(data)))
+	c.stats.incEntries()
+
+	// Evict if needed
+	if err := c.evictIfNeeded(); err != nil {
+		c.mu.Unlock()
+		return data, err
+	}
+	c.mu.Unlock()
+
+	return data, nil
+}
+
+// Sub returns an fs.FS rooted at the given directory
+func (c *CacheFS) Sub(dir string) (fs.FS, error) {
+	// Validate the directory exists
+	info, err := c.backing.Stat(dir)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, &fs.PathError{Op: "sub", Path: dir, Err: fmt.Errorf("not a directory")}
+	}
+
+	// Create a sub-CacheFS wrapping the same backing filesystem
+	// but with path prefixing. We'll create a Filer wrapper that prefixes paths.
+
+	// Create options based on current configuration
+	opts := []Option{
+		WithWriteMode(c.writeMode),
+		WithEvictionPolicy(c.evictionPolicy),
+		WithMaxBytes(c.maxBytes),
+		WithMaxEntries(c.maxEntries),
+		WithTTL(c.ttl),
+		WithFlushInterval(c.flushInterval),
+	}
+
+	if c.flushOnClose {
+		opts = append(opts, WithFlushOnClose(true))
+	}
+
+	if c.metadataCache {
+		opts = append(opts, WithMetadataCache(true))
+		if c.metadataMaxEntries > 0 {
+			opts = append(opts, WithMetadataMaxEntries(c.metadataMaxEntries))
+		}
+	}
+
+	// Create a path-prefixed wrapper around the backing filesystem
+	subFiler := &cacheFSSubFiler{parent: c.backing, prefix: dir}
+	subFS := New(absfs.ExtendFiler(subFiler), opts...)
+
+	return absfs.FilerToFS(subFS, ".")
+}
+
+// cacheFSSubFiler wraps a FileSystem and prefixes all paths with a directory
+type cacheFSSubFiler struct {
+	parent absfs.FileSystem
+	prefix string
+}
+
+func (s *cacheFSSubFiler) fullPath(name string) string {
+	clean := path.Clean("/" + name)
+	return path.Join(s.prefix, clean)
+}
+
+func (s *cacheFSSubFiler) OpenFile(name string, flag int, perm fs.FileMode) (absfs.File, error) {
+	return s.parent.OpenFile(s.fullPath(name), flag, perm)
+}
+
+func (s *cacheFSSubFiler) Mkdir(name string, perm fs.FileMode) error {
+	return s.parent.Mkdir(s.fullPath(name), perm)
+}
+
+func (s *cacheFSSubFiler) Remove(name string) error {
+	return s.parent.Remove(s.fullPath(name))
+}
+
+func (s *cacheFSSubFiler) Rename(oldpath, newpath string) error {
+	return s.parent.Rename(s.fullPath(oldpath), s.fullPath(newpath))
+}
+
+func (s *cacheFSSubFiler) Stat(name string) (fs.FileInfo, error) {
+	return s.parent.Stat(s.fullPath(name))
+}
+
+func (s *cacheFSSubFiler) Chmod(name string, mode fs.FileMode) error {
+	return s.parent.Chmod(s.fullPath(name), mode)
+}
+
+func (s *cacheFSSubFiler) Chtimes(name string, atime time.Time, mtime time.Time) error {
+	return s.parent.Chtimes(s.fullPath(name), atime, mtime)
+}
+
+func (s *cacheFSSubFiler) Chown(name string, uid, gid int) error {
+	return s.parent.Chown(s.fullPath(name), uid, gid)
+}
+
+func (s *cacheFSSubFiler) ReadDir(name string) ([]fs.DirEntry, error) {
+	fullPath := s.fullPath(name)
+	f, err := s.parent.Open(fullPath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return f.ReadDir(-1)
+}
+
+func (s *cacheFSSubFiler) ReadFile(name string) ([]byte, error) {
+	fullPath := s.fullPath(name)
+	f, err := s.parent.Open(fullPath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
+}
+
+func (s *cacheFSSubFiler) Sub(dir string) (fs.FS, error) {
+	fullDir := s.fullPath(dir)
+	// Validate directory exists
+	info, err := s.parent.Stat(fullDir)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, &fs.PathError{Op: "sub", Path: dir, Err: fmt.Errorf("not a directory")}
+	}
+	return absfs.FilerToFS(s, dir)
+}
+
+// SymlinkCacheFS wraps a SymlinkFileSystem with caching
+type SymlinkCacheFS struct {
+	*CacheFS
+	symlinkBacking absfs.SymlinkFileSystem
+}
+
+// NewSymlinkFS creates a new SymlinkCacheFS with the given backing SymlinkFileSystem and options
+func NewSymlinkFS(backing absfs.SymlinkFileSystem, opts ...Option) *SymlinkCacheFS {
+	cfs := New(backing, opts...)
+	return &SymlinkCacheFS{
+		CacheFS:        cfs,
+		symlinkBacking: backing,
+	}
+}
+
+// Lstat returns file info without following symlinks
+func (c *SymlinkCacheFS) Lstat(name string) (fs.FileInfo, error) {
+	return c.symlinkBacking.Lstat(name)
+}
+
+// Lchown changes the owner and group of a symlink
+func (c *SymlinkCacheFS) Lchown(name string, uid, gid int) error {
+	return c.symlinkBacking.Lchown(name, uid, gid)
+}
+
+// Readlink returns the destination of a symlink
+func (c *SymlinkCacheFS) Readlink(name string) (string, error) {
+	return c.symlinkBacking.Readlink(name)
+}
+
+// Symlink creates a symbolic link
+func (c *SymlinkCacheFS) Symlink(oldname, newname string) error {
+	return c.symlinkBacking.Symlink(oldname, newname)
 }

@@ -1084,20 +1084,6 @@ func TestCachedFileWriteString(t *testing.T) {
 	}
 }
 
-// TestFileSystemSeparators tests Separator and ListSeparator
-func TestFileSystemSeparators(t *testing.T) {
-	backing := newMockFS()
-	cache := New(backing)
-
-	if cache.Separator() != '/' {
-		t.Errorf("Separator() = %c, want /", cache.Separator())
-	}
-
-	if cache.ListSeparator() != ':' {
-		t.Errorf("ListSeparator() = %c, want :", cache.ListSeparator())
-	}
-}
-
 // TestFileSystemWorkingDirectory tests Chdir and Getwd
 func TestFileSystemWorkingDirectory(t *testing.T) {
 	backing := newMockFS()
@@ -1621,8 +1607,6 @@ func newThreadSafeMockFS() *threadSafeMockFS {
 	}
 }
 
-func (m *threadSafeMockFS) Separator() uint8     { return '/' }
-func (m *threadSafeMockFS) ListSeparator() uint8 { return ':' }
 func (m *threadSafeMockFS) Chdir(dir string) error {
 	m.mu.Lock()
 	m.cwd = dir
@@ -1699,6 +1683,21 @@ func (m *threadSafeMockFS) Glob(pattern string) ([]string, error) {
 	}
 	return matches, nil
 }
+func (m *threadSafeMockFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	return nil, nil
+}
+func (m *threadSafeMockFS) ReadFile(name string) ([]byte, error) {
+	m.mu.RLock()
+	data, ok := m.files[name]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return data, nil
+}
+func (m *threadSafeMockFS) Sub(dir string) (fs.FS, error) {
+	return absfs.FilerToFS(m, dir)
+}
 
 type threadSafeMockFile struct {
 	fs   *threadSafeMockFS
@@ -1767,6 +1766,7 @@ func (f *threadSafeMockFile) Sync() error                          { return nil 
 func (f *threadSafeMockFile) Stat() (os.FileInfo, error)           { return nil, nil }
 func (f *threadSafeMockFile) Readdir(n int) ([]os.FileInfo, error) { return nil, nil }
 func (f *threadSafeMockFile) Readdirnames(n int) ([]string, error) { return nil, nil }
+func (f *threadSafeMockFile) ReadDir(n int) ([]fs.DirEntry, error) { return nil, nil }
 func (f *threadSafeMockFile) ReadAt(b []byte, off int64) (n int, err error) {
 	f.fs.mu.RLock()
 	data, ok := f.fs.files[f.name]

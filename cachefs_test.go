@@ -3,6 +3,7 @@ package cachefs
 import (
 	"bytes"
 	"io"
+	"io/fs"
 	"os"
 	"sync"
 	"testing"
@@ -24,14 +25,6 @@ func newMockFS() *mockFS {
 		files: make(map[string][]byte),
 		cwd:   "/",
 	}
-}
-
-func (m *mockFS) Separator() uint8 {
-	return '/'
-}
-
-func (m *mockFS) ListSeparator() uint8 {
-	return ':'
 }
 
 func (m *mockFS) Chdir(dir string) error {
@@ -136,6 +129,24 @@ func (m *mockFS) Glob(pattern string) ([]string, error) {
 	return matches, nil
 }
 
+func (m *mockFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	return nil, nil
+}
+
+func (m *mockFS) ReadFile(name string) ([]byte, error) {
+	m.mu.RLock()
+	data, ok := m.files[name]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return data, nil
+}
+
+func (m *mockFS) Sub(dir string) (fs.FS, error) {
+	return absfs.FilerToFS(m, dir)
+}
+
 type mockFile struct {
 	fs   *mockFS
 	name string
@@ -220,6 +231,10 @@ func (f *mockFile) Readdir(n int) ([]os.FileInfo, error) {
 }
 
 func (f *mockFile) Readdirnames(n int) ([]string, error) {
+	return nil, nil
+}
+
+func (f *mockFile) ReadDir(n int) ([]fs.DirEntry, error) {
 	return nil, nil
 }
 

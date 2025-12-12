@@ -3,6 +3,7 @@ package cachefs_test
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"time"
 
@@ -19,8 +20,6 @@ func newSimpleFS() *simpleFS {
 	return &simpleFS{files: make(map[string][]byte)}
 }
 
-func (s *simpleFS) Separator() uint8                     { return '/' }
-func (s *simpleFS) ListSeparator() uint8                 { return ':' }
 func (s *simpleFS) Chdir(dir string) error               { return nil }
 func (s *simpleFS) Getwd() (string, error)               { return "/", nil }
 func (s *simpleFS) TempDir() string                      { return "/tmp" }
@@ -44,6 +43,19 @@ func (s *simpleFS) Chown(name string, uid, gid int) error                       
 func (s *simpleFS) Truncate(name string, size int64) error                      { return nil }
 func (s *simpleFS) OpenFile(name string, flag int, perm os.FileMode) (absfs.File, error) {
 	return &simpleFile{fs: s, name: name}, nil
+}
+func (s *simpleFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	return nil, nil
+}
+func (s *simpleFS) ReadFile(name string) ([]byte, error) {
+	data, ok := s.files[name]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return data, nil
+}
+func (s *simpleFS) Sub(dir string) (fs.FS, error) {
+	return absfs.FilerToFS(s, dir)
 }
 
 type simpleFile struct {
@@ -74,6 +86,7 @@ func (f *simpleFile) Sync() error                                  { return nil 
 func (f *simpleFile) Stat() (os.FileInfo, error)                   { return nil, nil }
 func (f *simpleFile) Readdir(int) ([]os.FileInfo, error)           { return nil, nil }
 func (f *simpleFile) Readdirnames(int) ([]string, error)           { return nil, nil }
+func (f *simpleFile) ReadDir(int) ([]fs.DirEntry, error)           { return nil, nil }
 func (f *simpleFile) Seek(offset int64, whence int) (int64, error) { f.pos = offset; return f.pos, nil }
 func (f *simpleFile) ReadAt(b []byte, off int64) (n int, err error) {
 	data := f.fs.files[f.name]

@@ -45,6 +45,12 @@ A sophisticated caching filesystem implementation for the AbsFS ecosystem, provi
 - Memory pressure detection and adaptive behavior
 - Separate limits for data and metadata caches
 
+### Symbolic Link Support
+
+- **CacheFS**: Implements `absfs.FileSystem` (no symlink methods)
+- **SymlinkCacheFS**: Implements `absfs.SymlinkFileSystem` with full symlink support
+- Use `NewSymlinkFS()` when your backing filesystem supports symlinks
+
 ### Cache Invalidation
 
 - **Time-Based**: TTL expiration with configurable durations
@@ -105,7 +111,7 @@ import (
 
 func main() {
     // Create backing filesystem
-    backing := memfs.NewFS()
+    backing, _ := memfs.NewFS()
 
     // Create cache with default settings (write-through, LRU, 100MB limit)
     cache := cachefs.New(backing)
@@ -120,6 +126,30 @@ func main() {
     // Reads and writes are automatically cached
     data := make([]byte, 1024)
     n, err := file.Read(data)
+}
+```
+
+### With Symlink Support
+
+```go
+package main
+
+import (
+    "github.com/absfs/cachefs"
+    "github.com/absfs/memfs"
+)
+
+func main() {
+    // Create backing filesystem with symlink support
+    backing, _ := memfs.NewFS()
+
+    // Create SymlinkCacheFS for full symlink support
+    cache := cachefs.NewSymlinkFS(backing)
+
+    // All symlink operations are passed through to backing
+    cache.Symlink("/target/file.txt", "/link.txt")
+    target, _ := cache.Readlink("/link.txt")
+    info, _ := cache.Lstat("/link.txt")
 }
 ```
 

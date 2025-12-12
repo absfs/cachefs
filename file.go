@@ -272,6 +272,30 @@ func (f *cachedFile) Readdirnames(n int) ([]string, error) {
 	return f.file.Readdirnames(n)
 }
 
+// ReadDir reads directory entries from the file
+func (f *cachedFile) ReadDir(n int) ([]fs.DirEntry, error) {
+	// Check if the underlying file implements ReadDir
+	type dirReader interface {
+		ReadDir(n int) ([]fs.DirEntry, error)
+	}
+
+	if dr, ok := f.file.(dirReader); ok {
+		return dr.ReadDir(n)
+	}
+
+	// Fall back to Readdir and convert FileInfo to DirEntry
+	fileInfos, err := f.file.Readdir(n)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]fs.DirEntry, len(fileInfos))
+	for i, info := range fileInfos {
+		entries[i] = fs.FileInfoToDirEntry(info)
+	}
+	return entries, nil
+}
+
 // Truncate changes the file size
 func (f *cachedFile) Truncate(size int64) error {
 	// Invalidate cache entry
